@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Clone of the classic arcade game **Asteroids**, built with plain HTML5 Canvas and vanilla JavaScript (ES6+). No build tools, no bundler, no package manager, no dependencies. The entire game logic lives in a single file: `game.js`.
+Clone of the classic arcade game **Asteroids**, built with plain HTML5 Canvas and vanilla JavaScript (ES6+). No build tools, no bundler, no package manager, no dependencies. The game logic lives in the `src/` folder, split into classic (non-module) scripts loaded in order by `index.html`.
 
 ## Running
 
@@ -16,16 +16,16 @@ There is no test suite, linter, or package.json in this repo. Verify changes by 
 
 ## Architecture
 
-`game.js` is structured as a single procedural file with clearly delimited sections (look for `// ── Section ──` comment dividers):
+The code is split into `src/*.js` files, loaded via plain `<script>` tags (no `import`/`export`, no bundler) in the exact order listed in `index.html`. All top-level `const`/`let`/functions/classes share one global scope across files, so load order matters whenever a later file references something defined earlier (e.g. `entities.js` uses `wrap`/`rand` from `core.js`; `update.js` uses classes from `entities.js` and state from `state.js`).
 
-1. **Input** — `keys` (held) and `justPressed` (edge-triggered) maps populated by `keydown`/`keyup` listeners. Use `pressed(code)` to consume a one-shot press (e.g. shooting), and `keys[code]` directly for continuous state (e.g. rotation/thrust).
-2. **Audio** — lazily-created single `AudioContext` (`getAudioCtx()`), with procedural sound synthesis via oscillators (e.g. `playShootSound()`). No audio files/assets.
-3. **Utils** — `wrap` (toroidal wraparound), `dist`, `rand`, `randInt`.
-4. **Entity classes** — `Bullet`, `Asteroid`, `Ship`, `Particle`. Each has its own `update(dt)` and `draw()`. All entities mark themselves `dead = true` rather than removing themselves from arrays; arrays are filtered each frame in `update()`.
-5. **Game state** — module-level mutable variables (`ship`, `bullets`, `asteroids`, `particles`, `score`, `lives`, `level`, `state`, `deadTimer`). `state` is one of `'playing' | 'dead' | 'gameover'`. There is no class/object wrapping this — it's a flat global state machine.
-6. **Update loop** (`update(dt)`) — branches on `state` first. Handles input → physics update → collision detection (bullet-vs-asteroid, ship-vs-asteroid) → level progression (`nextLevel()` when `asteroids.length === 0`).
-7. **Draw loop** (`draw()`) — clears canvas, draws entities back-to-front (particles → asteroids → bullets → ship), then HUD/overlays.
-8. **Main loop** (`loop(ts)`) — `requestAnimationFrame` loop computing `dt` in seconds, clamped to 0.05s max to avoid physics jumps on tab-switch/lag.
+1. **`src/core.js`** — canvas/context (`canvas`, `ctx`, `W`, `H`) and utils: `wrap` (toroidal wraparound), `dist`, `rand`, `randInt`.
+2. **`src/input.js`** — `keys` (held) and `justPressed` (edge-triggered) maps populated by `keydown`/`keyup` listeners. Use `pressed(code)` to consume a one-shot press (e.g. shooting), and `keys[code]` directly for continuous state (e.g. rotation/thrust).
+3. **`src/audio.js`** — lazily-created single `AudioContext` (`getAudioCtx()`), with procedural sound synthesis via oscillators (e.g. `playShootSound()`). No audio files/assets.
+4. **`src/entities.js`** — entity classes: `Bullet`, `Asteroid`, `Ship`, `Particle`, `PowerUp`. Each has its own `update(dt)` and `draw()`. All entities mark themselves `dead = true` rather than removing themselves from arrays; arrays are filtered each frame in `update()`.
+5. **`src/state.js`** — module-level mutable variables (`ship`, `bullets`, `asteroids`, `particles`, `powerUps`, `score`, `lives`, `level`, `state`, `deadTimer`, ...) plus state-transition functions (`showMenu`, `initGame`, `nextLevel`, `killShip`, `explode`, `spawnAsteroids`). `state` is one of `'menu' | 'playing' | 'dead' | 'gameover' | 'levelup'`. There is no class/object wrapping this — it's a flat global state machine.
+6. **`src/update.js`** — `update(dt)` branches on `state` first. Handles pause menu → input → physics update → collision detection (bullet-vs-asteroid, ship-vs-asteroid, ship-vs-powerup) → level progression (`nextLevel()` when `asteroids.length === 0`).
+7. **`src/draw.js`** — `draw()` clears canvas, draws entities back-to-front (particles → asteroids → power-ups → bullets → ship), then HUD/overlays (menu, pause, game over, level up).
+8. **`src/main.js`** — `requestAnimationFrame` loop (`loop(ts)`) computing `dt` in seconds, clamped to 0.05s max to avoid physics jumps on tab-switch/lag. Kicks off the game with `showMenu()`.
 
 ### Key conventions
 
@@ -37,5 +37,5 @@ There is no test suite, linter, or package.json in this repo. Verify changes by 
 
 ### Known gap
 
-`README.md` advertises power-ups and a unique "shooting star" asteroid type; neither exists in `game.js` yet. Don't assume these are implemented — check the code, not the README, before referencing this functionality.
+`README.md` advertises a unique "shooting star" asteroid type that doesn't exist in the code yet (power-ups — triple shot and shield — are implemented, in `src/entities.js`/`src/state.js`). Don't assume the shooting-star asteroid is implemented — check the code, not the README, before referencing that functionality.
 
