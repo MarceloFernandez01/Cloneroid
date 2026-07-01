@@ -337,6 +337,7 @@ class Ship {
     this.invincible    = 3;
     this.shootCooldown = 0;
     this.tripleShotTimer = 0;
+    this.shieldTimer   = 0;
     this.dead          = false;
   }
 
@@ -345,6 +346,7 @@ class Ship {
     if (this.invincible      > 0) this.invincible      -= dt;
     if (this.shootCooldown   > 0) this.shootCooldown   -= dt;
     if (this.tripleShotTimer > 0) this.tripleShotTimer -= dt;
+    if (this.shieldTimer     > 0) this.shieldTimer     -= dt;
 
     const ROT   = 3.5;   // rad/s
     const THRUST = 260;  // px/s²
@@ -385,6 +387,19 @@ class Ship {
 
   draw() {
     if (this.dead) return;
+
+    if (this.shieldTimer > 0) {
+      const glow = 0.6 + 0.4 * Math.sin(this.shieldTimer * 8);
+      ctx.save();
+      ctx.translate(this.x, this.y);
+      ctx.strokeStyle = `rgba(255, 165, 0, ${glow.toFixed(2)})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(0, 0, 19, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
     // Parpadeo durante invencibilidad de reaparición
     if (this.invincible > 0 && Math.floor(this.invincible * 8) % 2 === 0) return;
 
@@ -450,14 +465,22 @@ class Particle {
   }
 }
 
-// ── Power-up: Disparo Triple ─────────────────────────────────────────────────
+// ── Power-ups: Disparo Triple y Escudo Temporal ──────────────────────────────
 const TRIPLE_SHOT_CHANCE   = 1 / 50; // 1 de cada 50 asteroides pequeños destruidos
 const TRIPLE_SHOT_DURATION = 10;     // segundos de duración del power-up
+const SHIELD_CHANCE        = 1 / 50; // probabilidad independiente del disparo triple
+const SHIELD_DURATION      = 10;     // segundos de duración del escudo
+
+const POWERUP_COLORS = {
+  triple: '0, 255, 255',   // cian
+  shield: '255, 165, 0',   // naranjo
+};
 
 class PowerUp {
-  constructor(x, y) {
+  constructor(x, y, type) {
     this.x = x;
     this.y = y;
+    this.type = type; // 'triple' | 'shield'
     this.radius = 10;
     this.ttl = 8; // desaparece si no se recoge
     this.pulse = 0;
@@ -474,27 +497,35 @@ class PowerUp {
     const blink = this.ttl < 2 && Math.floor(this.ttl * 8) % 2 === 0;
     if (blink) return;
 
+    const rgb  = POWERUP_COLORS[this.type];
     const glow = 0.6 + 0.4 * Math.sin(this.pulse * 6);
     ctx.save();
     ctx.translate(this.x, this.y);
 
-    ctx.fillStyle   = `rgba(0, 255, 255, ${(glow * 0.35).toFixed(2)})`;
-    ctx.strokeStyle = `rgba(0, 255, 255, ${glow.toFixed(2)})`;
+    ctx.fillStyle   = `rgba(${rgb}, ${(glow * 0.35).toFixed(2)})`;
+    ctx.strokeStyle = `rgba(${rgb}, ${glow.toFixed(2)})`;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
 
-    // Icono: tres trazos en abanico, como el disparo triple
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 1.3;
-    [-0.35, 0, 0.35].forEach(a => {
+    if (this.type === 'triple') {
+      // Icono: tres trazos en abanico
+      [-0.35, 0, 0.35].forEach(a => {
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(Math.cos(a - Math.PI / 2) * 6, Math.sin(a - Math.PI / 2) * 6);
+        ctx.stroke();
+      });
+    } else {
+      // Icono: anillo de escudo
       ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.lineTo(Math.cos(a - Math.PI / 2) * 6, Math.sin(a - Math.PI / 2) * 6);
+      ctx.arc(0, 0, 5, 0, Math.PI * 2);
       ctx.stroke();
-    });
+    }
 
     ctx.restore();
   }
@@ -503,6 +534,7 @@ class PowerUp {
 // ── Estado del juego ──────────────────────────────────────────────────────────
 let ship, bullets, asteroids, particles, powerUps;
 let powerUpSpawnedThisLevel = false;
+let shieldSpawnedThisLevel = false;
 let score, lives, level;
 let state;      // 'menu' | 'playing' | 'dead' | 'gameover' | 'levelup'
 let deadTimer;
@@ -543,6 +575,7 @@ function initGame() {
   particles = [];
   powerUps  = [];
   powerUpSpawnedThisLevel = false;
+  shieldSpawnedThisLevel = false;
   score  = 0;
   lives  = 3;
   level  = 1;
@@ -556,6 +589,7 @@ function nextLevel() {
   particles = [];
   powerUps  = [];
   powerUpSpawnedThisLevel = false;
+  shieldSpawnedThisLevel = false;
   ship.reset();
   spawnAsteroids(3 + level);
 }
@@ -662,8 +696,12 @@ function update(dt) {
         explode(a.x, a.y, a.size * 5);
         newAsteroids.push(...a.split());
         if (a.size === 1 && !powerUpSpawnedThisLevel && Math.random() < TRIPLE_SHOT_CHANCE) {
-          powerUps.push(new PowerUp(a.x, a.y));
+          powerUps.push(new PowerUp(a.x, a.y, 'triple'));
           powerUpSpawnedThisLevel = true;
+        }
+        if (a.size === 1 && !shieldSpawnedThisLevel && Math.random() < SHIELD_CHANCE) {
+          powerUps.push(new PowerUp(a.x, a.y, 'shield'));
+          shieldSpawnedThisLevel = true;
         }
       }
     }
@@ -675,17 +713,28 @@ function update(dt) {
   if (ship.invincible <= 0) {
     for (const a of asteroids) {
       if (dist(ship, a) < ship.radius + a.radius * 0.82) {
-        killShip();
+        if (ship.shieldTimer > 0) {
+          // El escudo absorbe el golpe: el asteroide se destruye como si le hubieran disparado
+          a.dead = true;
+          score += POINTS[a.size];
+          explode(a.x, a.y, a.size * 5);
+          asteroids.push(...a.split());
+          ship.shieldTimer = 0;
+        } else {
+          killShip();
+        }
         break;
       }
     }
+    asteroids = asteroids.filter(a => !a.dead);
   }
 
   // Nave vs power-up
   for (const p of powerUps) {
     if (!p.dead && dist(ship, p) < ship.radius + p.radius) {
       p.dead = true;
-      ship.tripleShotTimer = TRIPLE_SHOT_DURATION;
+      if (p.type === 'triple') ship.tripleShotTimer = TRIPLE_SHOT_DURATION;
+      else if (p.type === 'shield') ship.shieldTimer = SHIELD_DURATION;
     }
   }
   powerUps = powerUps.filter(p => !p.dead);
@@ -738,6 +787,18 @@ function drawHUD() {
     ctx.strokeRect(barX, barY, barW, barH);
 
     ctx.fillStyle = 'rgba(0, 255, 255, 0.9)';
+    ctx.fillRect(barX, barY, barW * frac, barH);
+  }
+
+  if (ship.shieldTimer > 0) {
+    const barX = 14, barY = 52, barW = 140, barH = 8;
+    const frac = ship.shieldTimer / SHIELD_DURATION;
+
+    ctx.strokeStyle = 'rgba(255, 165, 0, 0.9)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(barX, barY, barW, barH);
+
+    ctx.fillStyle = 'rgba(255, 165, 0, 0.9)';
     ctx.fillRect(barX, barY, barW * frac, barH);
   }
 }
