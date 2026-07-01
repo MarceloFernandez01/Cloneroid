@@ -29,7 +29,7 @@ function pressed(code) {
 let audioCtx = null;
 let musicStarted = false;
 let masterVolumeGain = null;
-let masterVolume = 0.7;   // 0..1, ajustable desde el menú de pausa
+let masterVolume = 1;   // 0..1, ajustable desde el menú de pausa
 
 function getAudioCtx() {
   if (!audioCtx) {
@@ -55,7 +55,7 @@ function playShootSound() {
   osc.frequency.setValueAtTime(900, ctx.currentTime);
   osc.frequency.exponentialRampToValueAtTime(120, ctx.currentTime + 0.12);
 
-  gain.gain.setValueAtTime(0.4, ctx.currentTime);
+  gain.gain.setValueAtTime(0.65, ctx.currentTime);
   gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
 
   osc.connect(gain);
@@ -109,13 +109,50 @@ function playCrashSound() {
   osc.stop(now + 0.35);
 }
 
+const LEVEL_UP_DURATION = 1.4; // segundos: dura el "jiggle" antes de pasar de nivel
+
+function playLevelUpSound() {
+  const ctx = getAudioCtx();
+  const now = ctx.currentTime;
+
+  const osc  = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'square';
+  osc.frequency.setValueAtTime(660, now);
+
+  // Vibrato rápido: el "jiggle" del tono
+  const lfo     = ctx.createOscillator();
+  const lfoGain = ctx.createGain();
+  lfo.type = 'sine';
+  lfo.frequency.setValueAtTime(18, now);
+  lfoGain.gain.setValueAtTime(60, now);
+  lfo.connect(lfoGain);
+  lfoGain.connect(osc.frequency);
+  lfo.start(now);
+  lfo.stop(now + LEVEL_UP_DURATION);
+
+  // Arpegio ascendente sobre el vibrato
+  [660, 880, 1100, 1320].forEach((freq, i) => {
+    osc.frequency.setValueAtTime(freq, now + i * 0.12);
+  });
+
+  gain.gain.setValueAtTime(0.22, now);
+  gain.gain.setValueAtTime(0.22, now + LEVEL_UP_DURATION - 0.2);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + LEVEL_UP_DURATION);
+
+  osc.connect(gain);
+  gain.connect(masterVolumeGain);
+  osc.start(now);
+  osc.stop(now + LEVEL_UP_DURATION);
+}
+
 function startAmbientMusic() {
   if (musicStarted) return;
   musicStarted = true;
   const ctx = getAudioCtx();
 
   const masterGain = ctx.createGain();
-  masterGain.gain.setValueAtTime(0.22, ctx.currentTime);
+  masterGain.gain.setValueAtTime(0.5, ctx.currentTime);
   masterGain.connect(masterVolumeGain);
 
   // Dron grave: dos osciladores levemente desafinados para textura espacial
@@ -384,8 +421,9 @@ class Particle {
 // ── Estado del juego ──────────────────────────────────────────────────────────
 let ship, bullets, asteroids, particles;
 let score, lives, level;
-let state;      // 'playing' | 'dead' | 'gameover'
+let state;      // 'playing' | 'dead' | 'gameover' | 'levelup'
 let deadTimer;
+let levelUpTimer;
 let paused = false;
 let pauseIndex = 0;   // 0 = reanudar, 1 = reiniciar, 2 = volumen
 const PAUSE_OPTIONS = ['REANUDAR', 'REINICIAR PARTIDA', 'VOLUMEN'];
@@ -478,6 +516,14 @@ function update(dt) {
     return;
   }
 
+  if (state === 'levelup') {
+    levelUpTimer -= dt;
+    particles.forEach(p => p.update(dt));
+    particles = particles.filter(p => !p.dead);
+    if (levelUpTimer <= 0) { state = 'playing'; nextLevel(); }
+    return;
+  }
+
   // Disparar
   if (pressed('Space')) {
     const newBullets = ship.tryShoot();
@@ -520,7 +566,11 @@ function update(dt) {
   }
 
   // Nivel completado
-  if (asteroids.length === 0) nextLevel();
+  if (asteroids.length === 0) {
+    playLevelUpSound();
+    state        = 'levelup';
+    levelUpTimer = LEVEL_UP_DURATION;
+  }
 }
 
 // ── Draw ──────────────────────────────────────────────────────────────────────
@@ -597,6 +647,9 @@ function draw() {
 
   if (state === 'gameover')
     drawOverlay('GAME OVER', `PUNTAJE: ${score}   —   ESPACIO PARA REINICIAR`);
+
+  if (state === 'levelup')
+    drawOverlay(`NIVEL ${level} COMPLETADO`, `PREPARANDO NIVEL ${level + 1}...`);
 
   if (paused) drawPauseMenu();
 }
