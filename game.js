@@ -16,6 +16,7 @@ window.addEventListener('keydown', e => {
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code))
     e.preventDefault();
   startAmbientMusic();
+  if (state === 'menu') menuStartRequested = true;
 });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 
@@ -144,6 +145,26 @@ function playLevelUpSound() {
   gain.connect(masterVolumeGain);
   osc.start(now);
   osc.stop(now + LEVEL_UP_DURATION);
+}
+
+function playGameOverSound() {
+  const ctx = getAudioCtx();
+  const now = ctx.currentTime;
+  const notes = [440, 392, 349, 293, 220]; // jingle descendente de derrota
+
+  notes.forEach((freq, i) => {
+    const osc  = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const t = now + i * 0.18;
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(freq, t);
+    gain.gain.setValueAtTime(0.32, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.17);
+    osc.connect(gain);
+    gain.connect(masterVolumeGain);
+    osc.start(t);
+    osc.stop(t + 0.18);
+  });
 }
 
 function startAmbientMusic() {
@@ -483,9 +504,11 @@ class PowerUp {
 let ship, bullets, asteroids, particles, powerUps;
 let powerUpSpawnedThisLevel = false;
 let score, lives, level;
-let state;      // 'playing' | 'dead' | 'gameover' | 'levelup'
+let state;      // 'menu' | 'playing' | 'dead' | 'gameover' | 'levelup'
 let deadTimer;
 let levelUpTimer;
+let menuBlinkTimer = 0;
+let menuStartRequested = false;
 let paused = false;
 let pauseIndex = 0;   // 0 = reanudar, 1 = reiniciar, 2 = volumen
 const PAUSE_OPTIONS = ['REANUDAR', 'REINICIAR PARTIDA', 'VOLUMEN'];
@@ -500,6 +523,17 @@ function spawnAsteroids(count) {
     } while (Math.hypot(x - W / 2, y - H / 2) < SAFE_DIST);
     asteroids.push(new Asteroid(x, y, 3));
   }
+}
+
+function showMenu() {
+  ship = new Ship();
+  ship.dead = true; // oculta la nave en el menú
+  bullets   = [];
+  asteroids = [];
+  particles = [];
+  powerUps  = [];
+  menuBlinkTimer = 0;
+  state = 'menu';
 }
 
 function initGame() {
@@ -537,6 +571,7 @@ function killShip() {
   lives--;
   if (lives <= 0) {
     state = 'gameover';
+    playGameOverSound();
   } else {
     state     = 'dead';
     deadTimer = 2;
@@ -545,6 +580,15 @@ function killShip() {
 
 // ── Update ────────────────────────────────────────────────────────────────────
 function update(dt) {
+  if (state === 'menu') {
+    menuBlinkTimer += dt;
+    if (menuStartRequested) {
+      menuStartRequested = false;
+      initGame();
+    }
+    return;
+  }
+
   if (pressed('Escape') && state !== 'gameover') {
     paused = !paused;
     if (paused) pauseIndex = 0;
@@ -567,7 +611,7 @@ function update(dt) {
   }
 
   if (state === 'gameover') {
-    if (pressed('Space')) initGame();
+    if (pressed('Space')) showMenu();
     particles.forEach(p => p.update(dt));
     particles = particles.filter(p => !p.dead);
     return;
@@ -698,6 +742,46 @@ function drawHUD() {
   }
 }
 
+// Renderiza texto con pitch fijo (look de fuente arcade de 8 bits), sombra neón
+// desplazada estilo cabina de los 80', y lo escala sin suavizado para pixelarlo.
+// maxWidth limita el ancho final para que el texto quede dentro de los márgenes.
+function drawPixelText(text, cx, cy, fontSize, maxWidth, color) {
+  const off  = document.createElement('canvas');
+  const octx = off.getContext('2d');
+  const cellW   = fontSize * 0.82;
+  const padding = 4;
+  const w = Math.ceil(cellW * text.length) + padding * 2;
+  const h = Math.ceil(fontSize * 1.3) + padding;
+  off.width  = w;
+  off.height = h;
+
+  octx.font = `bold ${fontSize}px 'Courier New', monospace`;
+  octx.textBaseline = 'top';
+
+  octx.fillStyle = 'rgba(120,120,120,0.9)'; // sombra gris desplazada
+  for (let i = 0; i < text.length; i++)
+    octx.fillText(text[i], padding + i * cellW + 3, padding + 3);
+
+  octx.fillStyle = color;
+  for (let i = 0; i < text.length; i++)
+    octx.fillText(text[i], padding + i * cellW, padding);
+
+  const scale = Math.min(6, maxWidth / w);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(off, cx - (w * scale) / 2, cy - (h * scale) / 2, w * scale, h * scale);
+  ctx.imageSmoothingEnabled = true;
+}
+
+function drawMenu() {
+  drawPixelText('CLONEROID', W / 2, H / 2 - 60, 30, W - 100, '#fff');
+
+  ctx.textAlign = 'center';
+  ctx.font      = '18px monospace';
+  ctx.fillStyle = 'rgba(255,255,255,0.75)';
+  if (Math.floor(menuBlinkTimer * 2) % 2 === 0)
+    ctx.fillText('PULSA CUALQUIER TECLA PARA INICIAR', W / 2, H / 2 + 90);
+}
+
 function drawOverlay(title, sub) {
   ctx.textAlign   = 'center';
   ctx.fillStyle   = '#fff';
@@ -730,6 +814,11 @@ function draw() {
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, W, H);
 
+  if (state === 'menu') {
+    drawMenu();
+    return;
+  }
+
   particles.forEach(p => p.draw());
   asteroids.forEach(a => a.draw());
   powerUps.forEach(p => p.draw());
@@ -739,7 +828,7 @@ function draw() {
   drawHUD();
 
   if (state === 'gameover')
-    drawOverlay('GAME OVER', `PUNTAJE: ${score}   —   ESPACIO PARA REINICIAR`);
+    drawOverlay('GAME OVER', `PUNTAJE: ${score}   —   ESPACIO PARA VOLVER AL MENÚ`);
 
   if (state === 'levelup')
     drawOverlay(`NIVEL ${level} COMPLETADO`, `PREPARANDO NIVEL ${level + 1}...`);
@@ -758,5 +847,5 @@ function loop(ts) {
   requestAnimationFrame(loop);
 }
 
-initGame();
+showMenu();
 requestAnimationFrame(loop);
